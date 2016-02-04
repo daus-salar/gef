@@ -11,12 +11,19 @@
 package org.eclipse.gef.editpolicies;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.eclipse.core.runtime.IAdaptable;
 
+import org.eclipse.draw2d.Figure;
+import org.eclipse.draw2d.FigureListener;
+import org.eclipse.draw2d.IClippingStrategy;
 import org.eclipse.draw2d.IFigure;
+import org.eclipse.draw2d.Viewport;
+import org.eclipse.draw2d.ViewportUtilities;
 import org.eclipse.draw2d.geometry.Point;
+import org.eclipse.draw2d.geometry.Rectangle;
 
 import org.eclipse.gef.AccessibleHandleProvider;
 import org.eclipse.gef.Handle;
@@ -32,11 +39,13 @@ import org.eclipse.gef.LayerConstants;
  * {@link org.eclipse.core.runtime.IAdaptable} for accessibility support. If any
  * of the managed Handles provide accesible locations, then a
  * {@link org.eclipse.gef.AccessibleHandleProvider} is automatically created.
- * 
+ *
  * @since 2.0
  */
 public abstract class SelectionHandlesEditPolicy extends SelectionEditPolicy
 		implements IAdaptable {
+
+	private FigureListener sizeAdjuster;
 
 	/**
 	 * the List of handles
@@ -48,15 +57,51 @@ public abstract class SelectionHandlesEditPolicy extends SelectionEditPolicy
 	 */
 	protected void addSelectionHandles() {
 		removeSelectionHandles();
+
 		IFigure layer = getLayer(LayerConstants.HANDLE_LAYER);
-		handles = createSelectionHandles();
-		for (int i = 0; i < handles.size(); i++)
-			layer.add((IFigure) handles.get(i));
+
+		final IFigure handleContainer = new Figure();
+		handleContainer.setBounds(layer.getBounds().getCopy());
+		layer.add(handleContainer);
+
+		sizeAdjuster = new FigureListener() {
+
+			public void figureMoved(IFigure source) {
+				handleContainer.setBounds(source.getBounds().getCopy());
+			}
+		};
+		layer.addFigureListener(sizeAdjuster);
+		handles = Collections.singletonList(handleContainer);
+		attachClippingStrategy(handleContainer);
+
+		List selectionHandles = createSelectionHandles();
+		for (int i = 0; i < selectionHandles.size(); i++)
+			handleContainer.add((IFigure) selectionHandles.get(i));
+	}
+
+	private void attachClippingStrategy(IFigure parent) {
+		Viewport nearestEnclosingViewport = ViewportUtilities
+				.getNearestEnclosingViewport(getHostFigure());
+		if (nearestEnclosingViewport != null) {
+			final IFigure viewportParent = nearestEnclosingViewport.getParent();
+			// share a rectangle between calls
+			final Rectangle clippingArea = new Rectangle();
+
+			parent.setClippingStrategy(new IClippingStrategy() {
+
+				public Rectangle[] getClip(IFigure childFigure) {
+					clippingArea.setBounds(viewportParent.getBounds());
+					viewportParent.translateToAbsolute(clippingArea);
+					childFigure.translateToRelative(clippingArea);
+					return new Rectangle[] { clippingArea };
+				}
+			});
+		}
 	}
 
 	/**
 	 * Subclasses must implement to provide the list of handles.
-	 * 
+	 *
 	 * @return List of handles; cannot be <code>null</code>
 	 */
 	protected abstract List createSelectionHandles();
@@ -85,7 +130,7 @@ public abstract class SelectionHandlesEditPolicy extends SelectionEditPolicy
 
 	/**
 	 * Implemented to remove the handles.
-	 * 
+	 *
 	 * @see org.eclipse.gef.editpolicies.SelectionEditPolicy#hideSelection()
 	 */
 	protected void hideSelection() {
@@ -102,11 +147,13 @@ public abstract class SelectionHandlesEditPolicy extends SelectionEditPolicy
 		for (int i = 0; i < handles.size(); i++)
 			layer.remove((IFigure) handles.get(i));
 		handles = null;
+
+		layer.removeFigureListener(sizeAdjuster);
 	}
 
 	/**
 	 * Implemented to add the selection handles
-	 * 
+	 *
 	 * @see org.eclipse.gef.editpolicies.SelectionEditPolicy#showSelection()
 	 */
 	protected void showSelection() {
